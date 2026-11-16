@@ -45,7 +45,7 @@ def cmd_run(a: argparse.Namespace) -> None:
     from .agent import PIDFILE, Agent, load_config
     _setup_logging(True)
     cfg = load_config()
-    if not cfg.get("refreshToken"):
+    if not cfg.get("fleetKey"):
         sys.exit("Not paired yet. Run: rh pair <code from the dashboard>")
     dev = _root_device()
     PIDFILE.write_text(str(os.getpid()))
@@ -93,7 +93,7 @@ def cmd_status(a: argparse.Namespace) -> None:
     cfg = load_config()
     pid = _running_pid()
     print(f"Rejoin Hub agent {VERSION}")
-    print(f"  paired:  {'yes, as ' + cfg.get('name', '?') + ' (' + cfg.get('deviceId', '?') + ')' if cfg.get('refreshToken') else 'no'}")
+    print(f"  paired:  {'yes, as ' + cfg.get('name', '?') + ' (' + cfg.get('deviceId', '?') + ')' if cfg.get('fleetKey') else 'no'}")
     print(f"  running: {'yes (pid ' + str(pid) + ')' if pid else 'no'}")
 
 

@@ -1,6 +1,6 @@
 """Live smoke test: the real agent code against the real Firebase project, with a simulated phone.
 
-Usage: RH_PAIR=<RH1.code> python -m tests.live_smoke [seconds]
+Usage: RH_PAIR=<RH2.code> python -m tests.live_smoke [seconds]
 It registers a device called "pc-test", runs three fake clones for a while (so the dashboard shows them), then removes
 everything it wrote under devices/accounts/commands. No real phone is touched.
 """
@@ -21,6 +21,15 @@ from tests.fakes import Clock, Clone, FakeDevice  # noqa: E402
 
 
 class RealClock(Clock):
+    """Wall-clock time for the simulated phone (the fake device reads clock.t)."""
+    @property
+    def t(self) -> float:  # type: ignore[override]
+        return time.time()
+
+    @t.setter
+    def t(self, value: float) -> None:
+        pass
+
     def __call__(self) -> float:
         return time.time()
 

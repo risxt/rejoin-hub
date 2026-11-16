@@ -1,7 +1,9 @@
-"""Firebase Auth + Realtime Database over plain HTTPS (stdlib only).
+"""Firebase Realtime Database over plain HTTPS (stdlib only).
 
-The agent signs in with a refresh token (from the pairing code), keeps a fresh ID token, and talks to the Realtime
-Database REST API. Commands arrive through the REST streaming API (Server-Sent Events).
+Phones do not log in. Everything a phone may touch lives under fleet/<fleetKey>/, and the database rules open that
+branch only to callers who know the key (a long random code hidden inside the install command). Paths given to this
+class are relative to that branch. Commands arrive through the REST streaming API (Server-Sent Events).
+An optional refresh token is still supported for tools that sign in (phones do not use it).
 """
 from __future__ import annotations
 
@@ -27,9 +29,11 @@ class FirebaseError(Exception):
 
 
 class Firebase:
-    def __init__(self, api_key: str, db_url: str, refresh_token: str, timeout: float = 20.0):
+    def __init__(self, db_url: str, fleet_key: str | None = None, api_key: str = "", refresh_token: str = "",
+                 timeout: float = 20.0):
         self.api_key = api_key
         self.db_url = db_url.rstrip("/")
+        self.prefix = f"fleet/{fleet_key}/" if fleet_key else ""
         self._refresh_token = refresh_token
         self._id_token: str | None = None
         self._expires_at = 0.0
@@ -62,10 +66,11 @@ class Firebase:
 
     # ---- REST ---------------------------------------------------------------------------------------------------
     def _url(self, path: str, extra: dict[str, str] | None = None) -> str:
-        q = {"auth": self.id_token()}
+        q: dict[str, str] = {"auth": self.id_token()} if self._refresh_token else {}
         if extra:
             q.update(extra)
-        return f"{self.db_url}/{path.strip('/')}.json?{urllib.parse.urlencode(q)}"
+        full = (self.prefix + path.strip("/")).strip("/")
+        return f"{self.db_url}/{full}.json" + (f"?{urllib.parse.urlencode(q)}" if q else "")
 
     def request(self, method: str, path: str, value: Any = None, query: dict[str, str] | None = None) -> Any:
         for attempt in (1, 2):
@@ -75,7 +80,7 @@ class Firebase:
             try:
                 return _send(req, self.timeout)
             except FirebaseError as e:
-                if e.status == 401 and attempt == 1:
+                if e.status == 401 and attempt == 1 and self._refresh_token:
                     self.id_token(force=True)
                     continue
                 raise
@@ -120,13 +125,14 @@ class Firebase:
                                 msg = json.loads(payload)
                                 on_event(event, msg.get("path", "/"), msg.get("data"))
                             elif event == "auth_revoked":
-                                self.id_token(force=True)
-                                break  # reconnect with the new token
+                                if self._refresh_token:
+                                    self.id_token(force=True)
+                                break  # reconnect
                             elif event == "cancel":
                                 raise FirebaseError(403, f"stream cancelled: {payload}")
                             event = None
             except FirebaseError as e:
-                if e.status == 401:
+                if e.status == 401 and self._refresh_token:
                     self._safe_force_refresh()
                 log.warning("stream %s: %s", path, e)
             except Exception as e:  # network drop, timeout, DNS

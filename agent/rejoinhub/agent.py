@@ -33,20 +33,22 @@ class PairingError(ValueError):
 
 
 def decode_pairing(code: str) -> dict:
+    """RH2.<base64url {"d": database url, "f": fleet key}>, made by the dashboard's install command."""
     code = code.strip()
-    if not code.startswith("RH1."):
-        raise PairingError("this is not a Rejoin Hub pairing code (it starts with RH1.)")
+    if not code.startswith("RH2."):
+        raise PairingError("this is not a current Rejoin Hub install code (it starts with RH2.). Copy it again from the dashboard")
     raw = code[4:]
     try:
         data = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
     except (ValueError, TypeError):
-        raise PairingError("the pairing code is damaged: copy it again from the dashboard") from None
-    for k in ("k", "d", "t"):
-        if not isinstance(data.get(k), str) or not data[k]:
-            raise PairingError("the pairing code is incomplete: copy it again from the dashboard")
+        raise PairingError("the install code is damaged: copy it again from the dashboard") from None
+    if not isinstance(data, dict) or not all(isinstance(data.get(k), str) and data[k] for k in ("d", "f")):
+        raise PairingError("the install code is incomplete: copy it again from the dashboard")
     if not re.match(r"^https://[a-z0-9-]+\.([a-z0-9-]+\.)?(firebaseio\.com|firebasedatabase\.app)$", data["d"].rstrip("/")):
-        raise PairingError("the pairing code points at an unknown database")
-    return {"apiKey": data["k"], "dbUrl": data["d"].rstrip("/"), "refreshToken": data["t"]}
+        raise PairingError("the install code points at an unknown database")
+    if not re.match(r"^[A-Za-z0-9]{32,64}$", data["f"]):
+        raise PairingError("the install code is damaged: copy it again from the dashboard")
+    return {"dbUrl": data["d"].rstrip("/"), "fleetKey": data["f"]}
 
 
 def slug(name: str) -> str:
@@ -67,7 +69,7 @@ def save_config(cfg: dict) -> None:
     tmp.write_text(json.dumps(cfg, indent=1), encoding="utf-8")
     os.replace(tmp, CONFIG)
     try:
-        os.chmod(CONFIG, 0o600)  # the refresh token is a credential
+        os.chmod(CONFIG, 0o600)  # holds the fleet key
     except OSError:
         pass
 
@@ -75,15 +77,13 @@ def save_config(cfg: dict) -> None:
 def pair(code: str, name: str | None, dev: Device | None) -> dict:
     """Check the code against Firebase, pick a free device id, register the phone. Returns the saved config."""
     cfg = decode_pairing(code)
-    fb = Firebase(cfg["apiKey"], cfg["dbUrl"], cfg["refreshToken"])
-    fb.on_refresh_token = lambda t: cfg.__setitem__("refreshToken", t)
+    fb = Firebase(cfg["dbUrl"], cfg["fleetKey"])
     try:
-        fb.id_token()
+        fb.get("devices", shallow="true")
     except FirebaseError as e:
-        raise PairingError(f"Firebase refused the pairing code ({e}). Copy a fresh one from the dashboard") from None
-    role = fb.get(f"roles/{fb.uid}")
-    if role != "agent":
-        raise PairingError("this phone account is not approved as an agent yet (role missing in Firebase)")
+        if e.status in (401, 403):
+            raise PairingError("this install code is no longer valid (the phone key was changed). Copy a fresh one from the dashboard") from None
+        raise PairingError(f"could not reach Firebase ({e})") from None
     old = load_config()
     install_id = old.get("installId") or secrets.token_hex(6)
     model = dev.model() if dev else "Android"
@@ -173,18 +173,13 @@ class FirebaseReporter:
 class Agent:
     def __init__(self, cfg: dict, dev: Device):
         self.cfg = cfg
-        self.fb = Firebase(cfg["apiKey"], cfg["dbUrl"], cfg["refreshToken"])
-        self.fb.on_refresh_token = self._store_refresh
+        self.fb = Firebase(cfg["dbUrl"], cfg["fleetKey"])
         self.dev_id = cfg["deviceId"]
         self.rep = FirebaseReporter(self.fb, self.dev_id, cfg.get("name", self.dev_id))
         self.engine = Engine(dev, self.rep, str(STATE))
         self.stop = self.engine.stop_event
         self.seen: set[str] = set()
         self.reload = threading.Event()
-
-    def _store_refresh(self, token: str) -> None:
-        self.cfg["refreshToken"] = token
-        save_config(self.cfg)
 
     def load_remote_config(self) -> None:
         cfg = self.fb.get("config") or {}
@@ -229,10 +224,12 @@ class Agent:
             self.rep.heartbeat()
 
     def run(self) -> None:
-        self.fb.id_token()
-        role = self.fb.get(f"roles/{self.fb.uid}")
-        if role != "agent":
-            raise SystemExit("This phone's Firebase account has no agent role. Pair it again from the dashboard.")
+        try:
+            self.fb.get("devices", shallow="true")
+        except FirebaseError as e:
+            if e.status in (401, 403):
+                raise SystemExit("The phone key was changed in the dashboard. Copy the install command again and run it.") from None
+            raise
         self.load_remote_config()
         self.rep.device({"agent": VERSION, "android": self.engine.dev.android()})
         threading.Thread(target=self.fb.stream, args=(f"commands/{self.dev_id}", self._on_command_event, self.stop),

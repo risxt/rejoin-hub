@@ -70,14 +70,20 @@ class MiscTests(unittest.TestCase):
         self.assertEqual(clone_letter("com.roblox.client.vip2"), "client_vip2")
 
     def test_pairing(self):
-        raw = {"k": "AIza", "d": "https://example-app-default-rtdb.asia-southeast1.firebasedatabase.app", "t": "tok"}
-        code = "RH1." + base64.urlsafe_b64encode(json.dumps(raw).encode()).decode().rstrip("=")
-        self.assertEqual(decode_pairing(code)["refreshToken"], "tok")
+        key = "A" * 40
+        raw = {"d": "https://example-app-default-rtdb.asia-southeast1.firebasedatabase.app", "f": key}
+        code = "RH2." + base64.urlsafe_b64encode(json.dumps(raw).encode()).decode().rstrip("=")
+        self.assertEqual(decode_pairing(code)["fleetKey"], key)
         with self.assertRaises(PairingError):
-            decode_pairing("RH1.garbage!!")
+            decode_pairing("RH2.garbage!!")
+        with self.assertRaises(PairingError):
+            decode_pairing("RH1." + code[4:])
         bad = dict(raw, d="https://evil.example.com")
         with self.assertRaises(PairingError):
-            decode_pairing("RH1." + base64.urlsafe_b64encode(json.dumps(bad).encode()).decode())
+            decode_pairing("RH2." + base64.urlsafe_b64encode(json.dumps(bad).encode()).decode())
+        short = dict(raw, f="abc")
+        with self.assertRaises(PairingError):
+            decode_pairing("RH2." + base64.urlsafe_b64encode(json.dumps(short).encode()).decode())
 
     def test_slug_and_mask(self):
         self.assertEqual(slug("RF-01 VIP HK"), "rf-01-vip-hk")
