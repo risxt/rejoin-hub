@@ -1,0 +1,8 @@
+# Whitelist: only the phone agent is published. The dashboard, Firebase config and local secrets stay on this PC.
+/*
+!/.gitignore
+!/README.md
+!/agent/
+__pycache__/
+*.pyc
+!/.gitattributes
