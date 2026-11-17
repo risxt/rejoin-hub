@@ -465,7 +465,7 @@ class Engine:
             if inst.loaded_at is not None:
                 # Game loaded but our script never ran: Delta's key screen holds the executor.
                 if now - inst.loaded_at >= KEY_WAIT_S:
-                    if inst.last_error != "Game loaded, waiting for the Delta key":
+                    if inst.last_error not in ("Game loaded, waiting for the Delta key", KEY_NEEDED):
                         inst.last_error, inst.last_error_at = "Game loaded, waiting for the Delta key", now
                         self.rep.log("Game loaded but Delta has not started after 45 s (key screen?)", "warn", inst.letter)
                     return True
