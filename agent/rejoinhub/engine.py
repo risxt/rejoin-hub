@@ -464,7 +464,12 @@ class Engine:
                 return False
             if inst.loaded_at is not None:
                 # Game loaded but our script never ran: Delta's key screen holds the executor.
-                return now - inst.loaded_at >= KEY_WAIT_S
+                if now - inst.loaded_at >= KEY_WAIT_S:
+                    if inst.last_error != "Game loaded, waiting for the Delta key":
+                        inst.last_error, inst.last_error_at = "Game loaded, waiting for the Delta key", now
+                        self.rep.log("Game loaded but Delta has not started after 45 s (key screen?)", "warn", inst.letter)
+                    return True
+                return False
             if inst.status == "ingame" and inst.via_logcat:
                 if now - inst.last_logcat_check >= 15:
                     inst.last_logcat_check = now
@@ -481,9 +486,7 @@ class Engine:
                     if verdict == "ok" and self.detector_installed:
                         # Delta runs auto-execute only after its key is accepted, so a loaded game without our
                         # status file means the key screen is up.
-                        inst.loaded_at = now
-                        inst.last_error, inst.last_error_at = "Game loaded, waiting for the Delta key", now
-                        self.rep.log("Game loaded but Delta has not started (key screen?)", "warn", inst.letter)
+                        inst.loaded_at = now  # quiet: the detector usually reports 10-20 s after the game loads
                     elif verdict == "ok":
                         inst.via_logcat = True
                         self._enter_game(inst, now, prev, note=" (logcat; detector not running)")

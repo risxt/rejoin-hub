@@ -301,7 +301,7 @@ class EngineTests(unittest.TestCase):
                     t.join(5)
             run_for(e, dev, 120)
         self.assertEqual(calls, ["k"])
-        self.assertTrue(any("key screen" in t for t in rep.texts("p")))
+        self.assertTrue(any("key screen" in t for t in rep.texts("p")))  # only after 45 s without the detector
         self.assertEqual(statuses(rep)["p"], "ingame")
 
     def test_key_screen_without_izen_waits_instead_of_looping(self):
