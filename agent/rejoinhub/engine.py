@@ -48,8 +48,8 @@ NEEDS_ALWAYS = {"same_account"}     # rejoin only when "Always rejoin" is on (it
 DEFAULTS: dict[str, Any] = {
     "checkS": 10, "stuckS": 45, "restartWaitS": 5, "alwaysRejoin": True, "autoKey": True, "lowGfx": True,
     "raiseProcLimit": True, "closeOtherApps": False, "autoGrid": True, "orientation": "Landscape",
-    "webhook": "", "statusEvery": True, "focusRotateS": 0, "launchGapS": 8, "render3d": True,
-    "muteGame": True,
+    "webhook": "", "statusEvery": True, "focusRotateS": 0, "launchGapS": 8, "render3d": False,
+    "muteGame": True, "fpsCap": 15, "stripWorld": True,
 }
 
 
@@ -91,7 +91,7 @@ class Instance:
     via_logcat: bool = False             # in game according to logcat (detector not running)
     lobby_since: float | None = None
     render3d: bool | None = None         # per-clone override; None follows the global setting
-    render3d_written: bool | None = None # what the detector's cfg file currently says
+    render3d_written: str | None = None  # the detector cfg JSON last written (3D rendering + FPS cap)
     hb_dir: str | None = None            # folder the detector writes to (cfg file goes next to it)
     logged_in: bool | None = None        # None = not checked yet
     login_checked: float = 0.0
@@ -199,7 +199,7 @@ class Engine:
         if old.get("muteGame") != merged["muteGame"]:
             for inst in self.instances.values():
                 self.dev.set_muted(inst.pkg, bool(merged["muteGame"]))
-        if old.get("render3d") != merged["render3d"]:
+        if any(old.get(k) != merged[k] for k in ("render3d", "fpsCap", "stripWorld")):
             for inst in self.instances.values():
                 inst.render3d_written = None
         if old.get("orientation") != merged["orientation"] or old.get("autoGrid") != merged["autoGrid"]:
@@ -755,15 +755,18 @@ class Engine:
             self.save_state()
 
     def _sync_detector_cfg(self) -> None:
-        """Write cfg_<userId>.json next to each clone's status file when its 3D setting changed."""
+        """Write cfg_<userId>.json next to each clone's status file when its options changed: 3D rendering and the
+        FPS cap (applied by the detector with the executor's setfpscap; 0 = no cap)."""
         for inst in self.instances.values():
-            want = inst.render3d if inst.render3d is not None else bool(self.cfg.get("render3d", True))
+            want3d = inst.render3d if inst.render3d is not None else bool(self.cfg.get("render3d", False))
+            want = json.dumps({"render3d": want3d, "fps": max(0, int(self.cfg.get("fpsCap") or 0)),
+                               "strip": bool(self.cfg.get("stripWorld", True))})
             if want == inst.render3d_written or not inst.user_id:
                 continue
             folder = inst.hb_dir or next((f"{w}/RejoinHub" for _, a, w in EXECUTORS if self.dev.exists_dir(w)), None)
             if not folder:
                 continue
-            if self.dev.write_file(f"{folder}/cfg_{inst.user_id}.json", json.dumps({"render3d": want})):
+            if self.dev.write_file(f"{folder}/cfg_{inst.user_id}.json", want):
                 inst.render3d_written = want
 
     def _housekeeping(self, now: float) -> None:
@@ -864,7 +867,7 @@ class Engine:
             "lastError": inst.last_error,
             "lastErrorAt": int(inst.last_error_at * 1000) if inst.last_error_at else None,
             "target": inst.target or {"kind": "place", "value": inst.place_id or ""},
-            "render3d": inst.render3d if inst.render3d is not None else bool(self.cfg.get("render3d", True)),
+            "render3d": inst.render3d if inst.render3d is not None else bool(self.cfg.get("render3d", False)),
         }
         self.rep.account(inst.letter, data)
 

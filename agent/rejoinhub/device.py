@@ -34,17 +34,21 @@ VENDOR_PREFIXES = ("com.redfinger", "com.cloudemulator", "com.ld", "com.ldmnq", 
                    "com.baidu.cloud", "com.vmos", "com.gc.", "com.cloud")
 
 LOW_GFX_FLAGS = {
-    "FIntDebugFRMQualityLevelOverride": 1,
-    "DFFlagTextureQualityOverrideEnabled": True,
-    "DFIntTextureQualityOverride": 0,
-    "FIntDebugForceMSAASamples": 0,
-    "FIntFRMMinGrassDistance": 0,
-    "FIntFRMMaxGrassDistance": 0,
-    "FIntRenderGrassDetailStrands": 0,
-    "DFIntCSGLevelOfDetailSwitchingDistance": 0,
-    "DFIntCSGLevelOfDetailSwitchingDistanceL12": 0,
-    "DFIntCSGLevelOfDetailSwitchingDistanceL23": 0,
-    "DFIntCSGLevelOfDetailSwitchingDistanceL34": 0,
+    # Only Roblox's Fast Flag allowlist (devforum 3966569, Sept 2025) is honoured; everything else is ignored.
+    "DFIntDebugFRMQualityLevelOverride": "1",       # render quality level 1 (DFInt, not FInt)
+    "FIntDebugForceMSAASamples": "0",               # no anti-aliasing
+    "DFFlagDebugPauseVoxelizer": "True",            # stop the lighting voxelizer (CPU)
+    "FFlagDebugSkyGray": "True",                    # flat grey sky, no skybox textures
+    "DFFlagDisableDPIScale": "True",                # no DPI upscaling
+    "FIntFRMMinGrassDistance": "0",                 # no grass
+    "FIntFRMMaxGrassDistance": "0",
+    "FIntGrassMovementReducedMotionFactor": "0",
+    "DFFlagTextureQualityOverrideEnabled": "True",  # lowest textures (allowlisted; gone from some builds, harmless)
+    "DFIntTextureQualityOverride": "0",
+    "DFIntCSGLevelOfDetailSwitchingDistance": "0",  # lowest-detail unions/meshes right away
+    "DFIntCSGLevelOfDetailSwitchingDistanceL12": "0",
+    "DFIntCSGLevelOfDetailSwitchingDistanceL23": "0",
+    "DFIntCSGLevelOfDetailSwitchingDistanceL34": "0",
 }
 
 
