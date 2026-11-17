@@ -32,6 +32,8 @@ class Clone:
     frozen: bool = False              # process alive but the detector stops writing
     error: dict | None = None
     links: list = field(default_factory=list)
+    logged_in: bool = True
+    key_screen: bool = False          # game loads, but Delta's key screen blocks the detector
 
 
 class FakeDevice(Device):
@@ -60,7 +62,7 @@ class FakeDevice(Device):
     def _write_heartbeats(self) -> None:
         now = self.clock.t
         for c in self.clones.values():
-            if not c.running or c.join_after is None or c.frozen:
+            if not c.running or c.join_after is None or c.frozen or c.key_screen:
                 continue
             if now - c.launched_at < c.join_after:
                 continue
@@ -121,9 +123,12 @@ class FakeDevice(Device):
         c.links.append(link)
         self.next_pid += 1
 
+    def logged_in(self, pkg: str) -> bool:
+        return self.clones[pkg].logged_in
+
     def join_verdict(self, pid: int) -> str:
         for c in self.clones.values():
-            if c.pid == pid and c.pkg in self.logcat_ok and self.clock.t - c.launched_at > 20:
+            if c.pid == pid and (c.pkg in self.logcat_ok or c.key_screen) and self.clock.t - c.launched_at > 20:
                 return "ok"
         return "unknown"
 

@@ -122,6 +122,15 @@ class Device:
                 break
         return Identity(user, uid)
 
+    def logged_in(self, pkg: str) -> bool:
+        """True when the clone holds a Roblox session: a username in shared_prefs, or a .ROBLOSECURITY cookie."""
+        ident = self.identity(pkg)
+        if ident.user or ident.user_id:
+            return True
+        hit = self.out(f"grep -rlas ROBLOSECURITY /data/data/{q(pkg)}/app_webview /data/data/{q(pkg)}/shared_prefs "
+                       f"/data/data/{q(pkg)}/files 2>/dev/null | head -1", 20)
+        return bool(hit.strip())
+
     # ---- processes ------------------------------------------------------------------------------------------
     def pids(self, pkg: str) -> list[int]:
         return [int(x) for x in self.out(f"pidof {q(pkg)}").split() if x.isdigit()]

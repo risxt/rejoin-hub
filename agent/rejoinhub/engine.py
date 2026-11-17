@@ -36,6 +36,10 @@ EXECUTORS = [
 ]
 DETECTOR_NAME = "rejoinhub_detector.lua"
 HB_FRESH_S = 35            # the detector writes every 10 s; 3 missed writes = stale
+NOT_LOGGED_IN = "Not logged in"
+NO_TARGET = "No join target set"
+KEY_NEEDED = "Delta key needed"
+KEY_WAIT_S = 45                     # game loaded but no detector for this long = Delta key screen
 GRACE_KINDS = {"teleport_failed"}   # Roblox may retry a teleport on its own
 OWNER_KINDS = {"banned"}            # never auto-rejoin
 NEEDS_ALWAYS = {"same_account"}     # rejoin only when "Always rejoin" is on (it would kick the other session)
@@ -43,7 +47,7 @@ NEEDS_ALWAYS = {"same_account"}     # rejoin only when "Always rejoin" is on (it
 DEFAULTS: dict[str, Any] = {
     "checkS": 10, "stuckS": 45, "restartWaitS": 5, "alwaysRejoin": True, "autoKey": True, "lowGfx": True,
     "raiseProcLimit": True, "closeOtherApps": False, "autoGrid": True, "orientation": "Landscape",
-    "webhook": "", "statusEvery": True, "focusRotateS": 0, "launchGapS": 8, "render3d": True,
+    "webhook": "", "statusEvery": True, "focusRotateS": 0, "launchGapS": 8, "render3d": True, "defaultTarget": None,
 }
 
 
@@ -87,6 +91,10 @@ class Instance:
     render3d: bool | None = None         # per-clone override; None follows the global setting
     render3d_written: bool | None = None # what the detector's cfg file currently says
     hb_dir: str | None = None            # folder the detector writes to (cfg file goes next to it)
+    logged_in: bool | None = None        # None = not checked yet
+    login_checked: float = 0.0
+    no_target: bool = False              # launched without any place to join: stays in the app lobby
+    loaded_at: float | None = None       # logcat says the game loaded, but the detector has not run yet
 
     def to_state(self) -> dict:
         return {k: getattr(self, k) for k in ("enabled", "target", "user", "user_id", "rejoins", "rejoins_today",
@@ -363,6 +371,12 @@ class Engine:
             self._report(inst)
         if key_needed and not self._maybe_refresh_key(now):
             for inst in key_needed:
+                if inst.loaded_at is not None:
+                    # on the key screen: restarting would not help, wait for a key (izen retry or manual entry)
+                    if inst.last_error != KEY_NEEDED:
+                        inst.status, inst.last_error, inst.last_error_at = "lobby", KEY_NEEDED, now
+                        self.rep.log("Delta key needed. Set your izen key in Settings, or enter the key in Delta", "bad", inst.letter)
+                    continue
                 self._relaunch(inst, "did not reach the game", now)
                 self._report(inst)
         self._housekeeping(now)
@@ -372,6 +386,15 @@ class Engine:
         """Advance one clone. Returns True when its state points at an expired Delta key."""
         alive = self.dev.alive(inst.pkg)
         prev = inst.status
+
+        # 0. Not logged in: hands off (never open or close the app while the owner logs in).
+        if not self._check_login(inst, now):
+            if inst.status != "offline" or inst.last_error != NOT_LOGGED_IN:
+                inst.status, inst.since = "offline", None
+                inst.last_error, inst.last_error_at = NOT_LOGGED_IN, now
+                self.rep.log(f"Not logged in. Open Delta {inst.letter.upper()} and log in; it starts by itself after that",
+                             "warn", inst.letter)
+            return False
 
         if not alive:
             if inst.awaiting_launch:
@@ -410,6 +433,7 @@ class Engine:
         # 2. In game (detector)
         if in_game:
             inst.via_logcat = False
+            inst.loaded_at = None
             self._enter_game(inst, now, prev)
             return False
 
@@ -417,6 +441,15 @@ class Engine:
 
         # 3. No detector signal at all since this launch: fall back to the clone's logcat.
         if not self._detector_seen(inst):
+            if inst.no_target:
+                # Opened without a place to join: it sits in the Roblox lobby on purpose. Never loop restarts.
+                if inst.status != "lobby":
+                    inst.status, inst.last_error, inst.last_error_at = "lobby", NO_TARGET, now
+                    self.rep.log("No join target. Set a Place ID or private server link for this clone", "warn", inst.letter)
+                return False
+            if inst.loaded_at is not None:
+                # Game loaded but our script never ran: Delta's key screen holds the executor.
+                return now - inst.loaded_at >= KEY_WAIT_S
             if inst.status == "ingame" and inst.via_logcat:
                 if now - inst.last_logcat_check >= 15:
                     inst.last_logcat_check = now
@@ -430,7 +463,13 @@ class Engine:
                     inst.last_logcat_check = now
                     pids = self.dev.pids(inst.pkg)
                     verdict = self.dev.join_verdict(pids[0]) if pids else "unknown"
-                    if verdict == "ok":
+                    if verdict == "ok" and self.detector_installed:
+                        # Delta runs auto-execute only after its key is accepted, so a loaded game without our
+                        # status file means the key screen is up.
+                        inst.loaded_at = now
+                        inst.last_error, inst.last_error_at = "Game loaded, waiting for the Delta key", now
+                        self.rep.log("Game loaded but Delta has not started (key screen?)", "warn", inst.letter)
+                    elif verdict == "ok":
                         inst.via_logcat = True
                         self._enter_game(inst, now, prev, note=" (logcat; detector not running)")
                     elif verdict == "fail":
@@ -468,6 +507,26 @@ class Engine:
                 self.discord.send(f"{inst.letter.upper()} back in game", f"{mask(inst.user)}{where}", "ok")
         inst.joined_once = True
         inst.fail_streak = 0
+
+    def _check_login(self, inst: Instance, now: float) -> bool:
+        """Re-read the login state every 60 s while unknown or logged out. Any detector signal proves a login."""
+        if inst.last_hb > 0 or inst.via_logcat:
+            inst.logged_in = True
+        if inst.logged_in and now - inst.login_checked < 600:
+            return True
+        if inst.logged_in is False and now - inst.login_checked < 60:
+            return False
+        was = inst.logged_in
+        inst.login_checked = now
+        inst.logged_in = self.dev.logged_in(inst.pkg)
+        if inst.logged_in and was is False:
+            ident = self.dev.identity(inst.pkg)
+            inst.user = ident.user or inst.user
+            inst.user_id = ident.user_id or inst.user_id
+            inst.last_error, inst.status = None, "rejoining"
+            inst.awaiting_launch, inst.next_try_at = True, now
+            self.rep.log("Logged in, starting", "ok", inst.letter)
+        return bool(inst.logged_in)
 
     def _detector_seen(self, inst: Instance) -> bool:
         return inst.last_hb > 0 and inst.last_hb >= inst.launched_at - 5
@@ -510,13 +569,15 @@ class Engine:
             self.rep.log(f"{inst.fail_streak} failed joins in a row, waiting {int(delay)}s", "warn", inst.letter)
         self.dev.force_stop(inst.pkg)
         inst.status, inst.since, inst.pending_err, inst.via_logcat, inst.lobby_since = "rejoining", None, None, False, None
+        inst.loaded_at = None
         inst.next_try_at = at + delay
         inst.awaiting_launch = True  # _step launches it once next_try_at passes
         self.rep.log(f"Rejoining: {reason}", "info", inst.letter)
 
     def _launch(self, inst: Instance, now: float) -> None:
         try:
-            link = build_link(inst.target, inst.place_id)
+            target = inst.target if inst.target and str(inst.target.get("value", "")).strip() else self.cfg.get("defaultTarget")
+            link = build_link(target if isinstance(target, dict) else None, inst.place_id)
         except TargetError as e:
             self.rep.log(f"Bad target, joining without it: {e}", "warn", inst.letter)
             link = None
@@ -524,6 +585,8 @@ class Engine:
         self.dev.launch(inst.pkg, link, freeform)
         inst.launched_at = self.clock()
         inst.awaiting_launch = False
+        inst.no_target = link is None
+        inst.loaded_at = None
         inst.joined_once = False
         inst.status = "rejoining"
         inst.rejoins += 1

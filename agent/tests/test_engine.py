@@ -14,7 +14,10 @@ from tests.fakes import Clock, Clone, FakeDevice, MemReporter  # noqa: E402
 eng.game_name = lambda place: "Test Game" if place else None
 
 
-def make(clones=None, **kw):
+PLACE = {"kind": "place", "value": "8737899170"}
+
+
+def make(clones=None, target=True, **kw):
     clock = Clock()
     clones = clones or [Clone("com.roblox.clienp", "alpha_one", "101"), Clone("com.roblox.clienq", "bravo_two", "202"),
                         Clone("com.roblox.clienr", "charlie_3", "303")]
@@ -25,6 +28,16 @@ def make(clones=None, **kw):
     os.unlink(tmp.name)
     e = eng.Engine(dev, rep, tmp.name, clock=clock, sleep=clock.sleep)
     e.apply_config({"checkS": 10, "stuckS": 45, "restartWaitS": 5, "launchGapS": 8})
+    if target:
+        # configured clones: each one has somewhere to join (a clone without a target parks in the lobby)
+        setup, rescan = e.setup, e._rescan_packages
+
+        def with_targets():
+            for i in e.instances.values():
+                i.target = i.target or dict(PLACE)
+
+        e.setup = lambda: (setup(), with_targets())
+        e._rescan_packages = lambda now: (rescan(now), with_targets())
     return e, dev, rep, clock
 
 
@@ -238,6 +251,78 @@ class EngineTests(unittest.TestCase):
         e.apply_config({"render3d": False})
         run_for(e, dev, 20)
         self.assertEqual(json.loads(dev.files[f"{dev.WS}/RejoinHub/cfg_202.json"]), {"render3d": False})
+
+    def test_not_logged_in_is_left_alone_until_login(self):
+        clones = [Clone("com.roblox.clienp", "alpha_one", "101", logged_in=False)]
+        e, dev, rep, clock = make(clones)
+        e.setup()
+        run_for(e, dev, 120)
+        self.assertEqual(statuses(rep)["p"], "offline")
+        self.assertFalse([c for c in dev.calls if c.startswith(("launch", "force-stop"))])
+        self.assertTrue(any(t.startswith("Not logged in") for t in rep.texts("p")))
+        dev.clones["com.roblox.clienp"].logged_in = True
+        run_for(e, dev, 120)
+        self.assertIn("Logged in, starting", rep.texts("p"))
+        self.assertEqual(statuses(rep)["p"], "ingame")
+
+    def test_no_target_parks_in_lobby_without_restart_loop(self):
+        clones = [Clone("com.roblox.clienp", "alpha_one", "101", join_after=None)]
+        e, dev, rep, clock = make(clones, target=False)
+        e.setup()
+        run_for(e, dev, 600)
+        self.assertEqual(statuses(rep)["p"], "lobby")
+        self.assertEqual(len([c for c in dev.calls if c.startswith("launch")]), 1)
+        e.submit({"type": "target", "letter": "p", "target": {"kind": "place", "value": "8737899170"}})
+        dev.clones["com.roblox.clienp"].join_after = 20
+        run_for(e, dev, 90)
+        self.assertEqual(statuses(rep)["p"], "ingame")
+
+    def test_default_target_from_settings(self):
+        clones = [Clone("com.roblox.clienp", "alpha_one", "101")]
+        e, dev, rep, clock = make(clones, target=False)
+        e.apply_config({"defaultTarget": {"kind": "place", "value": "1234567"}})
+        e.setup()
+        run_for(e, dev, 60)
+        self.assertEqual(dev.clones["com.roblox.clienp"].links[0], "roblox://experiences/start?placeId=1234567")
+        self.assertEqual(statuses(rep)["p"], "ingame")
+
+    def test_key_screen_in_game_triggers_refresh_not_restart_loop(self):
+        clones = [Clone("com.roblox.clienp", "alpha_one", "101", key_screen=True)]
+        e, dev, rep, clock = make(clones, license="")
+        e.instances  # setup below
+        e.setup()
+        e.instances["com.roblox.clienp"].target = {"kind": "place", "value": "8737899170"}
+        e.izen_key = "k"
+        calls = []
+
+        def fake_refresh(d, pkgs, key):
+            calls.append(key)
+            dev.clones["com.roblox.clienp"].key_screen = False
+            return keybypass.KeyResult(True, "new Delta key written")
+
+        with mock.patch.object(keybypass, "refresh", fake_refresh):
+            run_for(e, dev, 150)
+            for t in list(__import__("threading").enumerate()):
+                if t.name == "key-refresh":
+                    t.join(5)
+            run_for(e, dev, 120)
+        self.assertEqual(calls, ["k"])
+        self.assertTrue(any("key screen" in t for t in rep.texts("p")))
+        self.assertEqual(statuses(rep)["p"], "ingame")
+
+    def test_key_screen_without_izen_waits_instead_of_looping(self):
+        clones = [Clone("com.roblox.clienp", "alpha_one", "101", key_screen=True)]
+        e, dev, rep, clock = make(clones, license="")
+        e.setup()
+        e.instances["com.roblox.clienp"].target = {"kind": "place", "value": "8737899170"}
+        with mock.patch.object(keybypass, "refresh", lambda d, p, k: keybypass.KeyResult(False, "no izen API key set")):
+            run_for(e, dev, 400)
+            for t in list(__import__("threading").enumerate()):
+                if t.name == "key-refresh":
+                    t.join(5)
+            run_for(e, dev, 300)
+        self.assertEqual(rep.accounts["p"]["lastError"], "Delta key needed")
+        self.assertLessEqual(len([c for c in dev.calls if c.startswith("launch")]), 2)
 
 
         e, dev, rep, clock = make()
