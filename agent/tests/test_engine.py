@@ -29,15 +29,9 @@ def make(clones=None, target=True, **kw):
     e = eng.Engine(dev, rep, tmp.name, clock=clock, sleep=clock.sleep)
     e.apply_config({"checkS": 10, "stuckS": 45, "restartWaitS": 5, "launchGapS": 8})
     if target:
-        # configured clones: each one has somewhere to join (a clone without a target parks in the lobby)
-        setup, rescan = e.setup, e._rescan_packages
-
-        def with_targets():
-            for i in e.instances.values():
-                i.target = i.target or dict(PLACE)
-
-        e.setup = lambda: (setup(), with_targets())
-        e._rescan_packages = lambda now: (rescan(now), with_targets())
+        # clones the owner already set up in the panel: a game each, switched on
+        for c in clones:
+            e.instances[c.pkg] = eng.Instance(pkg=c.pkg, letter=eng.clone_letter(c.pkg), enabled=True, target=dict(PLACE))
     return e, dev, rep, clock
 
 
@@ -224,7 +218,11 @@ class EngineTests(unittest.TestCase):
         run_for(e, dev, 60)
         dev.clones["com.roblox.clienu"] = Clone("com.roblox.clienu", "uniform_9", "909")
         run_for(e, dev, 120)
-        self.assertIn("New clone found: com.roblox.clienu", rep.texts("u"))
+        self.assertTrue(any(t.startswith("New clone found: com.roblox.clienu") for t in rep.texts("u")))
+        self.assertEqual(statuses(rep).get("u"), "offline")          # never auto-launched
+        self.assertFalse([c for c in dev.calls if c.startswith("launch com.roblox.clienu")])
+        e.submit({"type": "target", "letter": "u", "target": {"kind": "place", "value": "8737899170"}})
+        run_for(e, dev, 90)
         self.assertEqual(statuses(rep).get("u"), "ingame")
 
     def test_one_failed_package_scan_does_not_drop_clones(self):
@@ -265,26 +263,22 @@ class EngineTests(unittest.TestCase):
         self.assertIn("Logged in, starting", rep.texts("p"))
         self.assertEqual(statuses(rep)["p"], "ingame")
 
-    def test_no_target_parks_in_lobby_without_restart_loop(self):
-        clones = [Clone("com.roblox.clienp", "alpha_one", "101", join_after=None)]
-        e, dev, rep, clock = make(clones, target=False)
+    def test_fresh_install_waits_for_setup_from_the_panel(self):
+        e, dev, rep, clock = make(target=False)
         e.setup()
-        run_for(e, dev, 600)
-        self.assertEqual(statuses(rep)["p"], "lobby")
-        self.assertEqual(len([c for c in dev.calls if c.startswith("launch")]), 1)
+        run_for(e, dev, 300)
+        self.assertEqual(statuses(rep), {"p": "offline", "q": "offline", "r": "offline"})
+        self.assertEqual(rep.accounts["p"]["lastError"], "Set a game in the panel")
+        self.assertFalse([c for c in dev.calls if c.startswith("launch")])
+        e.submit({"type": "start"})                                    # Start all: nothing has a game yet
+        e.submit({"type": "start", "letter": "q"})                     # one clone without a game
+        run_for(e, dev, 30)
+        self.assertFalse([c for c in dev.calls if c.startswith("launch")])
+        self.assertTrue(any("Set a game for this clone first" in t for t in rep.texts("q")))
         e.submit({"type": "target", "letter": "p", "target": {"kind": "place", "value": "8737899170"}})
-        dev.clones["com.roblox.clienp"].join_after = 20
         run_for(e, dev, 90)
         self.assertEqual(statuses(rep)["p"], "ingame")
-
-    def test_default_target_from_settings(self):
-        clones = [Clone("com.roblox.clienp", "alpha_one", "101")]
-        e, dev, rep, clock = make(clones, target=False)
-        e.apply_config({"defaultTarget": {"kind": "place", "value": "1234567"}})
-        e.setup()
-        run_for(e, dev, 60)
-        self.assertEqual(dev.clones["com.roblox.clienp"].links[0], "roblox://experiences/start?placeId=1234567")
-        self.assertEqual(statuses(rep)["p"], "ingame")
+        self.assertEqual(statuses(rep)["q"], "offline")
 
     def test_key_screen_in_game_triggers_refresh_not_restart_loop(self):
         clones = [Clone("com.roblox.clienp", "alpha_one", "101", key_screen=True)]

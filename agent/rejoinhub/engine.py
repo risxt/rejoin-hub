@@ -37,6 +37,7 @@ EXECUTORS = [
 DETECTOR_NAME = "rejoinhub_detector.lua"
 HB_FRESH_S = 35            # the detector writes every 10 s; 3 missed writes = stale
 NOT_LOGGED_IN = "Not logged in"
+NEEDS_SETUP = "Set a game in the panel"
 NO_TARGET = "No join target set"
 KEY_NEEDED = "Delta key needed"
 KEY_WAIT_S = 45                     # game loaded but no detector for this long = Delta key screen
@@ -47,7 +48,7 @@ NEEDS_ALWAYS = {"same_account"}     # rejoin only when "Always rejoin" is on (it
 DEFAULTS: dict[str, Any] = {
     "checkS": 10, "stuckS": 45, "restartWaitS": 5, "alwaysRejoin": True, "autoKey": True, "lowGfx": True,
     "raiseProcLimit": True, "closeOtherApps": False, "autoGrid": True, "orientation": "Landscape",
-    "webhook": "", "statusEvery": True, "focusRotateS": 0, "launchGapS": 8, "render3d": True, "defaultTarget": None,
+    "webhook": "", "statusEvery": True, "focusRotateS": 0, "launchGapS": 8, "render3d": True,
 }
 
 
@@ -62,7 +63,7 @@ class Reporter(Protocol):
 class Instance:
     pkg: str
     letter: str
-    enabled: bool = True
+    enabled: bool = False                # off until the owner sets a game for it in the panel
     target: dict | None = None
     user: str | None = None
     user_id: str | None = None
@@ -241,6 +242,9 @@ class Engine:
         now = self.clock()
         gap = 0
         for inst in self.instances.values():
+            if not self._configured(inst):
+                inst.enabled = False
+                inst.status, inst.last_error = "offline", NEEDS_SETUP
             if not inst.enabled:
                 inst.status = "offline"
             elif self.dev.alive(inst.pkg):
@@ -287,10 +291,19 @@ class Engine:
             return
         for i, inst in enumerate(insts):
             if kind == "rejoin":
+                if not self._configured(inst):
+                    if cmd.get("letter"):
+                        self.rep.log("Set a game for this clone first (Place ID, PS link or Job ID)", "warn", inst.letter)
+                    continue
                 inst.enabled = True
                 self._relaunch(inst, cmd.get("reason") or "rejoin requested from the dashboard",
                                now + i * self.cfg["launchGapS"], manual=True)
             elif kind == "start":
+                if not self._configured(inst):
+                    if not cmd.get("letter"):
+                        continue  # "Start all" skips clones that have no game yet
+                    self.rep.log("Set a game for this clone first (Place ID, PS link or Job ID)", "warn", inst.letter)
+                    continue
                 if not inst.enabled or inst.status == "offline":
                     inst.enabled = True
                     inst.fail_streak = 0
@@ -318,6 +331,8 @@ class Engine:
                     continue
                 inst.target = t
                 inst.enabled = True
+                if inst.last_error == NEEDS_SETUP:
+                    inst.last_error = None
                 self._relaunch(inst, "new join target", now, manual=True)
             self._report(inst)
         self.tiled_set = ()
@@ -508,6 +523,10 @@ class Engine:
         inst.joined_once = True
         inst.fail_streak = 0
 
+    @staticmethod
+    def _configured(inst: Instance) -> bool:
+        return bool(inst.target and str(inst.target.get("value", "")).strip())
+
     def _check_login(self, inst: Instance, now: float) -> bool:
         """Re-read the login state every 60 s while unknown or logged out. Any detector signal proves a login."""
         if inst.last_hb > 0 or inst.via_logcat:
@@ -523,9 +542,13 @@ class Engine:
             ident = self.dev.identity(inst.pkg)
             inst.user = ident.user or inst.user
             inst.user_id = ident.user_id or inst.user_id
-            inst.last_error, inst.status = None, "rejoining"
-            inst.awaiting_launch, inst.next_try_at = True, now
-            self.rep.log("Logged in, starting", "ok", inst.letter)
+            if inst.enabled:
+                inst.last_error, inst.status = None, "rejoining"
+                inst.awaiting_launch, inst.next_try_at = True, now
+                self.rep.log("Logged in, starting", "ok", inst.letter)
+            else:
+                inst.last_error = NEEDS_SETUP if not self._configured(inst) else None
+                self.rep.log("Logged in", "ok", inst.letter)
         return bool(inst.logged_in)
 
     def _detector_seen(self, inst: Instance) -> bool:
@@ -576,8 +599,7 @@ class Engine:
 
     def _launch(self, inst: Instance, now: float) -> None:
         try:
-            target = inst.target if inst.target and str(inst.target.get("value", "")).strip() else self.cfg.get("defaultTarget")
-            link = build_link(target if isinstance(target, dict) else None, inst.place_id)
+            link = build_link(inst.target, inst.place_id)
         except TargetError as e:
             self.rep.log(f"Bad target, joining without it: {e}", "warn", inst.letter)
             link = None
@@ -703,11 +725,11 @@ class Engine:
             inst.user, inst.user_id = ident.user, ident.user_id
             if inst.user_id:
                 self.bindings[inst.user_id] = pkg
-            inst.status, inst.awaiting_launch, inst.next_try_at = "rejoining", True, now + 5
+            inst.status, inst.last_error = "offline", NEEDS_SETUP  # waits for a game from the panel
             self.instances[pkg] = inst
             if self.cfg["lowGfx"]:
                 self.dev.apply_low_gfx(pkg, True)
-            self.rep.log(f"New clone found: {pkg}", "info", inst.letter)
+            self.rep.log(f"New clone found: {pkg}. Set its game in the panel to start it", "info", inst.letter)
             self._report(inst)
         for pkg in removed:
             inst = self.instances.pop(pkg)
