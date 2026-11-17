@@ -25,11 +25,13 @@ if ! command -v python3 >/dev/null 2>&1 || ! curl_ok || ! command -v tar >/dev/n
   export DEBIAN_FRONTEND=noninteractive
   # A FULL upgrade first: installing python on an old Termux upgrades libcurl without openssl and breaks curl
   # ("cannot locate symbol SSL_set_quic_tls_early_data_enabled").
-  yes | pkg upgrade -y -o Dpkg::Options::=--force-confnew >/dev/null 2>&1 || true
-  yes | pkg install -y -o Dpkg::Options::=--force-confnew python curl tar openssl >/dev/null 2>&1 \
-    || die "Installing python failed. Run 'pkg upgrade' once, then paste the install command again."
+  # apt, not pkg: pkg's mirror check itself needs a working curl.
+  apt-get update -y >/dev/null 2>&1 || true
+  apt-get full-upgrade -y -o Dpkg::Options::=--force-confnew >/dev/null 2>&1 || true
+  apt-get install -y -o Dpkg::Options::=--force-confnew python curl tar openssl >/dev/null 2>&1 \
+    || die "Installing python failed. Run: apt update && apt full-upgrade -y   then paste the install command again."
 fi
-curl_ok || die "curl is broken (half-updated Termux). Run 'pkg upgrade', then paste the install command again."
+curl_ok || die "curl is broken (half-updated Termux). Run: apt update && apt full-upgrade -y   then paste the install command again."
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' || die "Python 3.10+ needed. Run: pkg upgrade python"
 
 say "Downloading the agent…"
