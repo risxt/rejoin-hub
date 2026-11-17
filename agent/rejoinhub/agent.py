@@ -74,6 +74,30 @@ def save_config(cfg: dict) -> None:
         pass
 
 
+def _taken(fb: Firebase, device_id: str, install_id: str) -> bool:
+    existing = fb.get(f"devices/{device_id}")
+    return bool(existing) and existing.get("installId") not in (None, install_id)
+
+
+def free_device_id(fb: Firebase, base: str, install_id: str) -> str:
+    device_id = base
+    for n in range(2, 100):
+        if not _taken(fb, device_id, install_id):
+            return device_id
+        device_id = f"{base[:26]}-{n}"
+    return f"{base[:20]}-{install_id[:6]}"
+
+
+def next_phone_number(fb: Firebase, install_id: str) -> tuple[str, str]:
+    """Automatic tidy names: Phone 1, Phone 2, ... using the lowest free number."""
+    used = set((fb.get("devices", shallow="true") or {}).keys())
+    for n in range(1, 1000):
+        device_id = f"phone-{n}"
+        if device_id not in used and not _taken(fb, device_id, install_id):
+            return device_id, f"Phone {n}"
+    return f"phone-{install_id[:6]}", f"Phone {install_id[:4]}"
+
+
 def pair(code: str, name: str | None, dev: Device | None) -> dict:
     """Check the code against Firebase, pick a free device id, register the phone. Returns the saved config."""
     cfg = decode_pairing(code)
@@ -87,14 +111,14 @@ def pair(code: str, name: str | None, dev: Device | None) -> dict:
     old = load_config()
     install_id = old.get("installId") or secrets.token_hex(6)
     model = dev.model() if dev else "Android"
-    name = (name or old.get("name") or f"{model} {install_id[:4]}").strip()[:40]
-    base = old.get("deviceId") or slug(name)
-    device_id = base
-    for n in range(2, 50):
-        existing = fb.get(f"devices/{device_id}")
-        if not existing or existing.get("installId") in (None, install_id):
-            break
-        device_id = f"{base[:26]}-{n}"
+    if old.get("deviceId") and not name:
+        # reinstall / update on the same phone: keep its id and name
+        device_id, name = old["deviceId"], old.get("name") or old["deviceId"]
+    elif name:
+        name = name.strip()[:40]
+        device_id = free_device_id(fb, slug(name), install_id)
+    else:
+        device_id, name = next_phone_number(fb, install_id)
     cfg.update({"deviceId": device_id, "name": name, "installId": install_id})
     fb.patch(f"devices/{device_id}", {"name": name, "installId": install_id, "android": dev.android() if dev else "?",
                                       "model": model, "agent": VERSION, "lastReport": SERVER_TIMESTAMP})

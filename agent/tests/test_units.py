@@ -85,6 +85,24 @@ class MiscTests(unittest.TestCase):
         with self.assertRaises(PairingError):
             decode_pairing("RH2." + base64.urlsafe_b64encode(json.dumps(short).encode()).decode())
 
+    def test_auto_phone_names(self):
+        from rejoinhub.agent import next_phone_number
+
+        class FakeFb:
+            def __init__(self, devices):
+                self.devices = devices
+
+            def get(self, path, **q):
+                if path == "devices":
+                    return {k: True for k in self.devices}
+                return self.devices.get(path.split("/", 1)[1])
+
+        self.assertEqual(next_phone_number(FakeFb({}), "aaa"), ("phone-1", "Phone 1"))
+        fb = FakeFb({"phone-1": {"installId": "x"}, "phone-2": {"installId": "y"}})
+        self.assertEqual(next_phone_number(fb, "zzz"), ("phone-3", "Phone 3"))
+        fb = FakeFb({"phone-1": {"installId": "x"}, "phone-3": {"installId": "y"}})
+        self.assertEqual(next_phone_number(fb, "zzz"), ("phone-2", "Phone 2"))  # fills the gap
+
     def test_slug_and_mask(self):
         self.assertEqual(slug("RF-01 VIP HK"), "rf-01-vip-hk")
         self.assertEqual(mask("alpha_one"), "alp****ne")

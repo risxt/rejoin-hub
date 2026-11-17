@@ -13,10 +13,10 @@ Copy the command from the dashboard (Settings → Connection → Install on a ne
 looks like this:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/risxt/rejoin-hub/main/agent/install.sh | bash -s -- RH1.<code> "RF-01"
+curl -fsSL https://raw.githubusercontent.com/risxt/rejoin-hub/main/agent/install.sh | bash -s -- RH2.<code>
 ```
 
-Run the same line without a code to update.
+The same command works on every phone; phones are named Phone 1, Phone 2… automatically. Run the line without a code to update.
 
 ## Commands
 
