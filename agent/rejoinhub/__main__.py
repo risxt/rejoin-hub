@@ -131,6 +131,34 @@ def cmd_doctor(a: argparse.Namespace) -> None:
     print("Done. Send a screenshot of this to Claude if something shows '--'.")
 
 
+def cmd_windows(a: argparse.Namespace) -> None:
+    """Read-only window diagnosis: is freeform supported, which task-resize command works (tested on a running clone)."""
+    dev = _root_device()
+    def show(title: str, cmd: str) -> None:
+        print(f"--- {title}")
+        print(dev.out(cmd, 30)[:1500])
+    print(f"Rejoin Hub windows check {VERSION} (Android {dev.android()}, SDK {dev.sdk})")
+    show("settings", "for k in enable_freeform_support force_resizable_activities enable_non_resizable_multi_window "
+         "force_desktop_mode_on_external_displays; do echo \"$k=$(settings get global $k)\"; done")
+    show("freeform feature", "pm list features | grep -iE 'freeform|picture_in_picture|multi' || echo 'no freeform feature listed'")
+    show("config_freeformWindowManagement (dumpsys)", "dumpsys activity settings 2>/dev/null | head -5; "
+         "dumpsys window | grep -m3 -iE 'freeform|mSupportsFreeform|supportsFreeform' || echo none")
+    tasks = dev.task_ids()
+    roblox = {p: t for p, t in tasks.items() if "roblox" in p}
+    print(f"--- roblox tasks: {roblox or 'none running (open one clone first)'}")
+    show("task modes", "dumpsys activity activities | grep -E 'Task[{]|TaskRecord[{]|mWindowingMode|windowingMode=' "
+         "| grep -iE -B1 -A1 'roblox' | head -30")
+    for pkg, tid in roblox.items():
+        for cmd in (f"am task resize {tid} 0 0 640 360", f"cmd activity task resize {tid} 0 0 640 360",
+                    f"am task resize {tid} 0,0,640,360"):
+            rc, out = dev.run(cmd)
+            print(f"--- try: {cmd}")
+            print(f"rc={rc} {out.strip()[:400]}")
+        break
+    show("stack list", "am stack list 2>&1 | head -25")
+    print("Done. Send a screenshot of everything above to Claude.")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="rh", description="Rejoin Hub phone agent")
     p.add_argument("--version", action="version", version=VERSION)
@@ -143,6 +171,7 @@ def main() -> None:
     sub.add_parser("stop", help="stop the background agent").set_defaults(fn=cmd_stop)
     sub.add_parser("status", help="show pairing and run state").set_defaults(fn=cmd_status)
     sub.add_parser("doctor", help="read-only device check").set_defaults(fn=cmd_doctor)
+    sub.add_parser("windows", help="diagnose window tiling (tries resizing a running clone)").set_defaults(fn=cmd_windows)
     a = p.parse_args()
     a.fn(a)
 
