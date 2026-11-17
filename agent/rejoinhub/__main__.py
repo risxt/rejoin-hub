@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import logging
 import logging.handlers
 import os
@@ -154,6 +155,21 @@ def cmd_windows(a: argparse.Namespace) -> None:
             rc, out = dev.run(cmd)
             print(f"--- try: {cmd}")
             print(f"rc={rc} {out.strip()[:400]}")
+        break
+    for pkg, tid in roblox.items():
+        # Android 10 refuses to resize a fullscreen task. Try to move the task into a freeform stack first:
+        # open Settings as a freeform window (creates the freeform stack), move the Roblox task there, then resize.
+        print("--- try: move the task into a freeform stack")
+        print(dev.out("am start --windowingMode 5 -n com.android.settings/.Settings 2>&1 | tail -2", 20))
+        stacks = dev.out("am stack list", 20)
+        free = [int(m.group(1)) for m in re.finditer(r"Stack id=(\d+)[^\n]*\n[^\n]*mWindowingMode=freeform", stacks)]
+        print(f"freeform stacks: {free}")
+        if free:
+            print(dev.out(f"am stack move-task {tid} {free[0]} true 2>&1", 20) or "(moved, no output)")
+            rc, out = dev.run(f"am task resize {tid} 0 0 640 360")
+            print(f"resize after move: rc={rc} {out.strip()[:300] or 'OK'}")
+        print(dev.out("am force-stop com.android.settings; dumpsys activity activities | grep -E 'Task[{]|mWindowingMode' "
+                      f"| grep -A1 '#{tid} ' | head -4", 20))
         break
     show("stack list", "am stack list 2>&1 | head -25")
     print("Done. Send a screenshot of everything above to Claude.")
