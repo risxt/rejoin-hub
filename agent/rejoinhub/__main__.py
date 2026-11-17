@@ -115,7 +115,7 @@ def cmd_doctor(a: argparse.Namespace) -> None:
     for p in pkgs:
         ident = dev.identity(p)
         print(f"    {clone_letter(p).upper():>3}  {p}  user={ident.user or '?'} id={ident.user_id or '?'}  running={dev.alive(p)}"
-              f"  launcher={dev.launcher_component(p) or '?'}")
+              f"  launcher={dev.launcher_component(p) or '?'}  float={'ours' if dev.is_float(p) else 'no'}")
     for name, auto_dir, ws in EXECUTORS:
         if dev.exists_dir(auto_dir) or dev.exists_dir(ws):
             print(f"{ok(dev.exists_dir(auto_dir))}{name}: autoexec={dev.exists_dir(auto_dir)} workspace={dev.exists_dir(ws)}")

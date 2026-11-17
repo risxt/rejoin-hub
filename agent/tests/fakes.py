@@ -156,6 +156,15 @@ class FakeDevice(Device):
         self.calls.append(f"resize {task_id} {rect}")
         return True
 
+    floating: set = set()   # packages built with our rh.FloatWindow runtime
+
+    def is_float(self, pkg: str) -> bool:
+        return pkg in self.floating
+
+    def place_window(self, pkg: str, rect) -> bool:
+        self.calls.append(f"place {pkg} {rect}")
+        return True
+
     def exists_dir(self, path: str) -> bool:
         return path in self.dirs
 

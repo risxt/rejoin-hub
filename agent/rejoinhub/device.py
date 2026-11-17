@@ -67,6 +67,7 @@ class Device:
         self.sh = sh
         self._sdk: int | None = None
         self._launchers: dict[str, str] = {}
+        self._float: dict[str, tuple[float, bool]] = {}
 
     def run(self, cmd: str, timeout: float = 30.0) -> tuple[int, str]:
         return self.sh.run(cmd, timeout)
@@ -167,19 +168,34 @@ class Device:
             return comp
         return self._launchers[pkg]
 
-    def _mode(self, freeform: bool) -> str:
-        return "--windowingMode 5 " if freeform and self.sdk >= 28 else ""
+    def is_float(self, pkg: str) -> bool:
+        """True for our floating clones (rh.FloatWindow runtime): they float, move and resize themselves inside a
+        normal full-screen task, so they must never be started in freeform mode or resized by the system."""
+        now = time.monotonic()
+        hit = self._float.get(pkg)
+        if hit is None or now - hit[0] > 300:
+            found = "rh.FloatProvider" in self.out(f"dumpsys package {q(pkg)} | grep -m1 rh.FloatProvider")
+            hit = (now, found)
+            self._float[pkg] = hit
+        return hit[1]
+
+    def _mode(self, freeform: bool, pkg: str) -> str:
+        if self.sdk < 28:
+            return ""
+        if self.is_float(pkg):
+            return "--windowingMode 1 "          # full-screen task; a task left in freeform from before is reset
+        return "--windowingMode 5 " if freeform else ""
 
     def open_app(self, pkg: str, freeform: bool) -> bool:
         comp = self.launcher_component(pkg)
         if comp:
-            rc, out = self.run(f"am start {self._mode(freeform)}-n {q(comp)}")
+            rc, out = self.run(f"am start {self._mode(freeform, pkg)}-n {q(comp)}")
             return rc == 0 and "Error" not in out
         rc, _ = self.run(f"monkey -p {q(pkg)} -c android.intent.category.LAUNCHER 1")
         return rc == 0
 
     def open_link(self, pkg: str, link: str, freeform: bool) -> bool:
-        rc, out = self.run(f"am start {self._mode(freeform)}-a {VIEW} -d {q(link)} -p {q(pkg)}")
+        rc, out = self.run(f"am start {self._mode(freeform, pkg)}-a {VIEW} -d {q(link)} -p {q(pkg)}")
         return rc == 0 and "Error" not in out
 
     def launch(self, pkg: str, link: str | None, freeform: bool) -> None:
@@ -193,7 +209,7 @@ class Device:
     def focus(self, pkg: str, freeform: bool) -> None:
         comp = self.launcher_component(pkg)
         if comp:
-            self.run(f"am start {self._mode(freeform)}-n {q(comp)}")
+            self.run(f"am start {self._mode(freeform, pkg)}-n {q(comp)}")
 
     def join_verdict(self, pid: int) -> str:
         """'ok' | 'fail' | 'unknown' from the instance's own logcat."""
@@ -240,6 +256,23 @@ class Device:
             if m and m.group(2) not in ids:
                 ids[m.group(2)] = int(m.group(1))
         return ids
+
+    def place_window(self, pkg: str, rect: tuple[int, int, int, int]) -> bool:
+        """Tell a floating clone where its window goes: "seq left top right bottom" (screen pixels, header included)
+        in its own files/rh_window. The clone checks the file every second. The file gets the app's owner and SELinux
+        label, otherwise the app could not read a file root wrote."""
+        l, t, r, b = rect
+        app, d = f"/data/data/{pkg}", f"/data/data/{pkg}/files"
+        line = f"{int(time.time() * 1000)} {l} {t} {r} {b}"
+        cmd = (f"[ -d {q(app)} ] || exit 3; own=$(stat -c %u:%g {q(app)}); ctx=$(ls -Zd {q(app)} | awk '{{print $1}}'); "
+               f"[ -d {q(d)} ] || {{ mkdir -p {q(d)} && chown $own {q(d)} && chmod 771 {q(d)} && chcon $ctx {q(d)}; }}; "
+               f"printf '%s\\n' {q(line)} > {q(d + '/rh_window.tmp')} && chown $own {q(d + '/rh_window.tmp')} && "
+               f"chmod 600 {q(d + '/rh_window.tmp')} && chcon $ctx {q(d + '/rh_window.tmp')} && "
+               f"mv -f {q(d + '/rh_window.tmp')} {q(d + '/rh_window')}")
+        rc, out = self.run(cmd)
+        if rc != 0:
+            log.warning("place_window %s failed (%s): %s", pkg, rc, out.strip()[:200])
+        return rc == 0
 
     def resize_task(self, task_id: int, rect: tuple[int, int, int, int]) -> bool:
         l, t, r, b = rect

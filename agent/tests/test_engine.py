@@ -49,6 +49,23 @@ def statuses(rep):
 
 
 class EngineTests(unittest.TestCase):
+    def test_float_clones_place_their_own_window(self):
+        # our floating clones get a frame file; a clone without the runtime still gets a system task resize
+        e, dev, rep, clock = make()
+        dev.floating = {"com.roblox.clienp", "com.roblox.clienq"}
+        e.setup()
+        run_for(e, dev, 120)
+        places = [c for c in dev.calls if c.startswith("place ")]
+        resizes = [c for c in dev.calls if c.startswith("resize ")]
+        self.assertTrue(any("com.roblox.clienp" in c for c in places))
+        self.assertTrue(any("com.roblox.clienq" in c for c in places))
+        self.assertFalse(any("com.roblox.clienr" in c for c in places))
+        self.assertTrue(resizes, "the non-floating clone is still tiled by the system")
+        # frames come from the grid: three windows side by side on a 1280x720 landscape screen, no overlap
+        last = {c.split()[1]: eval(c.split(" ", 2)[2]) for c in places}
+        p, q = last["com.roblox.clienp"], last["com.roblox.clienq"]
+        self.assertTrue(p[2] <= q[0] or q[2] <= p[0] or p[3] <= q[1] or q[3] <= p[1])
+
     def test_fresh_start_all_join_staggered(self):
         e, dev, rep, clock = make()
         e.setup()

@@ -813,9 +813,15 @@ class Engine:
         landscape = self.cfg["orientation"] != "Portrait"
         self.dev.set_rotation(landscape)
         rects = grid.layout(len(live), size[0], size[1], landscape)
-        tasks = self.dev.task_ids()
+        tasks: dict[str, int] | None = None
         ok = 0
         for pkg, rect in zip(live, rects):
+            if self.dev.is_float(pkg):
+                # our floating clones move their own window (no system resize, which crashes some cloud ROMs)
+                ok += self.dev.place_window(pkg, rect)
+                continue
+            if tasks is None:
+                tasks = self.dev.task_ids()
             tid = tasks.get(pkg)
             if tid is not None and self.dev.resize_task(tid, rect):
                 ok += 1
