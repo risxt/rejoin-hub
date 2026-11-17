@@ -49,6 +49,18 @@ def statuses(rep):
 
 
 class EngineTests(unittest.TestCase):
+    def test_clones_muted_and_lowest_quality_before_launch(self):
+        e, dev, rep, clock = make()
+        e.setup()
+        run_for(e, dev, 60)
+        for pkg in ("com.roblox.clienp", "com.roblox.clienq", "com.roblox.clienr"):
+            self.assertIn(f"mute {pkg} True", dev.calls)
+            i_set = dev.calls.index(f"settings {pkg} low=True mute=True")
+            i_launch = next(i for i, c in enumerate(dev.calls) if c.startswith(f"launch {pkg}"))
+            self.assertLess(i_set, i_launch, "settings are written while the clone is closed, before its launch")
+        e.apply_config({"muteGame": False})
+        self.assertIn("mute com.roblox.clienp False", dev.calls)
+
     def test_float_clones_place_their_own_window(self):
         # our floating clones get a frame file; a clone without the runtime still gets a system task resize
         e, dev, rep, clock = make()

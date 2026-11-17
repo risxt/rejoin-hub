@@ -48,6 +48,20 @@ LOW_GFX_FLAGS = {
 }
 
 
+def set_setting(xml: str, tag: str, name: str, value: str) -> str:
+    """Set one property in Roblox's GlobalBasicSettings XML (<tag name="Name">value</tag>), adding it to the
+    UserGameSettings item when it is missing."""
+    rx = re.compile(r'(<(\w+) name="' + re.escape(name) + r'">)[^<]*(</\2>)')
+    if rx.search(xml):
+        return rx.sub(lambda m: m.group(1) + value + m.group(3), xml, count=1)
+    item = xml.find('class="UserGameSettings"')
+    props = xml.find("<Properties>", item if item >= 0 else 0)
+    if props < 0:
+        return xml
+    at = props + len("<Properties>")
+    return xml[:at] + f'\n\t\t\t<{tag} name="{name}">{value}</{tag}>' + xml[at:]
+
+
 @dataclass
 class Identity:
     user: str | None
@@ -312,19 +326,51 @@ class Device:
                 closed.append(pkg)
         return closed
 
+    def _give_to_app(self, pkg: str, *paths: str) -> None:
+        """Files root created inside an app's data dir: hand them the app's owner and SELinux label, otherwise the
+        app cannot read them."""
+        app = f"/data/data/{pkg}"
+        self.run(f"own=$(stat -c %u:%g {q(app)}); ctx=$(ls -Zd {q(app)} | awk '{{print $1}}'); "
+                 + " ".join(f"chown $own {q(p)}; chcon $ctx {q(p)} 2>/dev/null;" for p in paths))
+
     def apply_low_gfx(self, pkg: str, on: bool) -> bool:
         """Write (or remove) ClientAppSettings.json with the low graphics flags for one clone."""
         import json
-        d = f"/data/data/{pkg}/files/exe/ClientSettings"
+        exe = f"/data/data/{pkg}/files/exe"
+        d = f"{exe}/ClientSettings"
         f = f"{d}/ClientAppSettings.json"
         if not on:
             self.run(f"rm -f {q(f)}")
             return True
-        owner = self.out(f"stat -c %u:%g /data/data/{q(pkg)}")
         ok = self.write_file(f, json.dumps(LOW_GFX_FLAGS, indent=1))
-        if ok and re.match(r"^\d+:\d+$", owner):
-            self.run(f"chown -R {owner} {q(d)} && chmod 755 {q(d)} && chmod 644 {q(f)}")
+        if ok:
+            self._give_to_app(pkg, exe, d, f)
+            self.run(f"chmod 755 {q(exe)} {q(d)} && chmod 644 {q(f)}")
         return ok
+
+    def set_muted(self, pkg: str, on: bool) -> None:
+        """Android-level mute: the clone may not play any audio (works at once, no restart)."""
+        self.run(f"cmd appops set {q(pkg)} PLAY_AUDIO {'ignore' if on else 'allow'}")
+
+    def apply_game_settings(self, pkg: str, low_quality: bool, mute: bool) -> bool:
+        """Roblox's own saved settings, the ones its Settings menu shows: Graphics Quality manual 1 (lowest) instead
+        of Automatic, and Master Volume 0. Only while the clone is closed: Roblox rewrites this file on exit.
+        The file appears after the clone's first run; editing in place keeps its owner and SELinux label."""
+        path = self.out(f"find /data/data/{q(pkg)}/files -name GlobalBasicSettings_13.xml 2>/dev/null | head -1")
+        if not path:
+            return False
+        xml = self.read_file(path)
+        if not xml or "UserGameSettings" not in xml:
+            return False
+        new = set_setting(xml, "token", "SavedQualityLevel", "1" if low_quality else "0")
+        if low_quality:
+            new = set_setting(new, "int", "GraphicsQualityLevel", "1")
+        new = set_setting(new, "float", "MasterVolume", "0" if mute else "1")
+        if new == xml:
+            return True
+        b64 = base64.b64encode(new.encode()).decode()
+        rc, _ = self.run(f"printf %s {q(b64)} | base64 -d > {q(path)}")
+        return rc == 0
 
     # ---- files ----------------------------------------------------------------------------------------------
     def write_file(self, path: str, content: str) -> bool:

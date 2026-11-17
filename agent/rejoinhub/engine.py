@@ -49,6 +49,7 @@ DEFAULTS: dict[str, Any] = {
     "checkS": 10, "stuckS": 45, "restartWaitS": 5, "alwaysRejoin": True, "autoKey": True, "lowGfx": True,
     "raiseProcLimit": True, "closeOtherApps": False, "autoGrid": True, "orientation": "Landscape",
     "webhook": "", "statusEvery": True, "focusRotateS": 0, "launchGapS": 8, "render3d": True,
+    "muteGame": True,
 }
 
 
@@ -195,6 +196,9 @@ class Engine:
         if old.get("lowGfx") != merged["lowGfx"]:
             for inst in self.instances.values():
                 self.dev.apply_low_gfx(inst.pkg, bool(merged["lowGfx"]))
+        if old.get("muteGame") != merged["muteGame"]:
+            for inst in self.instances.values():
+                self.dev.set_muted(inst.pkg, bool(merged["muteGame"]))
         if old.get("render3d") != merged["render3d"]:
             for inst in self.instances.values():
                 inst.render3d_written = None
@@ -234,6 +238,8 @@ class Engine:
         if self.cfg["lowGfx"]:
             for inst in self.instances.values():
                 self.dev.apply_low_gfx(inst.pkg, True)
+        for inst in self.instances.values():
+            self.dev.set_muted(inst.pkg, bool(self.cfg["muteGame"]))
         self.install_detector()
         self.last_rescan = self.clock()
         names = ", ".join(f"{i.letter.upper()}={mask(i.user)}" for i in self.instances.values())
@@ -607,6 +613,9 @@ class Engine:
             self.rep.log(f"Bad target, joining without it: {e}", "warn", inst.letter)
             link = None
         freeform = bool(self.cfg["autoGrid"]) and self.freeform_ready
+        if not self.dev.alive(inst.pkg):
+            # Roblox's own saved settings (Settings menu): lowest graphics quality, volume 0. Closed apps only.
+            self.dev.apply_game_settings(inst.pkg, bool(self.cfg["lowGfx"]), bool(self.cfg["muteGame"]))
         self.dev.launch(inst.pkg, link, freeform)
         inst.launched_at = self.clock()
         inst.awaiting_launch = False
@@ -732,6 +741,7 @@ class Engine:
             self.instances[pkg] = inst
             if self.cfg["lowGfx"]:
                 self.dev.apply_low_gfx(pkg, True)
+            self.dev.set_muted(pkg, bool(self.cfg["muteGame"]))
             self.rep.log(f"New clone found: {pkg}. Set its game in the panel to start it", "info", inst.letter)
             self._report(inst)
         for pkg in removed:

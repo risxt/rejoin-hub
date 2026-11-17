@@ -9,11 +9,39 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from rejoinhub import grid, links  # noqa: E402
 from rejoinhub.agent import PairingError, decode_pairing, slug  # noqa: E402
-from rejoinhub.device import clone_letter  # noqa: E402
+from rejoinhub.device import clone_letter, set_setting  # noqa: E402
 from rejoinhub.engine import parse_command  # noqa: E402
 from rejoinhub.keybypass import pick_link  # noqa: E402
 from rejoinhub.notify import mask  # noqa: E402
 from rejoinhub.shell import RootShell  # noqa: E402
+
+
+class GameSettingsTests(unittest.TestCase):
+    XML = "\n".join([
+        '<roblox version="4">',
+        '  <Item class="UserGameSettings" referent="RBX0">',
+        '    <Properties>',
+        '      <float name="MasterVolume">0.5</float>',
+        '      <token name="SavedQualityLevel">0</token>',
+        '    </Properties>',
+        '  </Item>',
+        '</roblox>',
+    ])
+
+    def test_replace_existing(self):
+        x = set_setting(set_setting(self.XML, "token", "SavedQualityLevel", "1"), "float", "MasterVolume", "0")
+        self.assertIn('<token name="SavedQualityLevel">1</token>', x)
+        self.assertIn('<float name="MasterVolume">0</float>', x)
+        self.assertEqual(x.count("SavedQualityLevel"), 1)
+
+    def test_insert_missing(self):
+        x = set_setting(self.XML, "int", "GraphicsQualityLevel", "1")
+        self.assertIn('<int name="GraphicsQualityLevel">1</int>', x)
+        self.assertLess(x.index("<Properties>"), x.index("GraphicsQualityLevel"))
+        self.assertLess(x.index("GraphicsQualityLevel"), x.index("</Properties>"))
+
+    def test_no_item_untouched(self):
+        self.assertEqual(set_setting("<roblox/>", "int", "X", "1"), "<roblox/>")
 
 
 class LinkTests(unittest.TestCase):

@@ -165,6 +165,13 @@ class FakeDevice(Device):
         self.calls.append(f"place {pkg} {rect}")
         return True
 
+    def set_muted(self, pkg: str, on: bool) -> None:
+        self.calls.append(f"mute {pkg} {on}")
+
+    def apply_game_settings(self, pkg: str, low_quality: bool, mute: bool) -> bool:
+        self.calls.append(f"settings {pkg} low={low_quality} mute={mute}")
+        return True
+
     def exists_dir(self, path: str) -> bool:
         return path in self.dirs
 
