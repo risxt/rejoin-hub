@@ -43,7 +43,7 @@ NEEDS_ALWAYS = {"same_account"}     # rejoin only when "Always rejoin" is on (it
 DEFAULTS: dict[str, Any] = {
     "checkS": 10, "stuckS": 45, "restartWaitS": 5, "alwaysRejoin": True, "autoKey": True, "lowGfx": True,
     "raiseProcLimit": True, "closeOtherApps": False, "autoGrid": True, "orientation": "Landscape",
-    "webhook": "", "statusEvery": True, "focusRotateS": 0, "launchGapS": 8,
+    "webhook": "", "statusEvery": True, "focusRotateS": 0, "launchGapS": 8, "render3d": True,
 }
 
 
@@ -84,10 +84,14 @@ class Instance:
     awaiting_launch: bool = False        # stopped on purpose, launch at next_try_at
     via_logcat: bool = False             # in game according to logcat (detector not running)
     lobby_since: float | None = None
+    render3d: bool | None = None         # per-clone override; None follows the global setting
+    render3d_written: bool | None = None # what the detector's cfg file currently says
+    hb_dir: str | None = None            # folder the detector writes to (cfg file goes next to it)
 
     def to_state(self) -> dict:
         return {k: getattr(self, k) for k in ("enabled", "target", "user", "user_id", "rejoins", "rejoins_today",
-                                              "uptime_today_s", "day", "handled_err_ts", "last_error", "last_error_at")}
+                                              "uptime_today_s", "day", "handled_err_ts", "last_error", "last_error_at",
+                                              "render3d")}
 
 
 @dataclass
@@ -182,6 +186,9 @@ class Engine:
         if old.get("lowGfx") != merged["lowGfx"]:
             for inst in self.instances.values():
                 self.dev.apply_low_gfx(inst.pkg, bool(merged["lowGfx"]))
+        if old.get("render3d") != merged["render3d"]:
+            for inst in self.instances.values():
+                inst.render3d_written = None
         if old.get("orientation") != merged["orientation"] or old.get("autoGrid") != merged["autoGrid"]:
             self.tiled_set = ()
             self.retile_at = self.clock()
@@ -290,6 +297,10 @@ class Engine:
                 self.dev.force_stop(inst.pkg)
                 inst.status, inst.since, inst.pending_err = "offline", None, None
                 self.rep.log("Stopped from the dashboard", "plain", inst.letter)
+            elif kind == "render3d":
+                inst.render3d = bool(cmd.get("on"))
+                inst.render3d_written = None  # rewrite the detector's cfg on the next tick
+                self.rep.log(f"3D rendering {'on' if inst.render3d else 'off'}", "plain", inst.letter)
             elif kind == "target":
                 t = cmd.get("target")
                 try:
@@ -337,6 +348,8 @@ class Engine:
             hb = by_pkg.get(inst.pkg)
             if hb:
                 inst.last_hb = max(inst.last_hb, hb.ts)
+                if hb.path:
+                    inst.hb_dir = hb.path.rsplit("/", 1)[0]
                 if hb.place_id and hb.place_id != "0":
                     inst.place_id = hb.place_id
                 inst.job_id = hb.job_id or inst.job_id
@@ -643,7 +656,20 @@ class Engine:
         if added or removed:
             self.save_state()
 
+    def _sync_detector_cfg(self) -> None:
+        """Write cfg_<userId>.json next to each clone's status file when its 3D setting changed."""
+        for inst in self.instances.values():
+            want = inst.render3d if inst.render3d is not None else bool(self.cfg.get("render3d", True))
+            if want == inst.render3d_written or not inst.user_id:
+                continue
+            folder = inst.hb_dir or next((f"{w}/RejoinHub" for _, a, w in EXECUTORS if self.dev.exists_dir(w)), None)
+            if not folder:
+                continue
+            if self.dev.write_file(f"{folder}/cfg_{inst.user_id}.json", json.dumps({"render3d": want})):
+                inst.render3d_written = want
+
     def _housekeeping(self, now: float) -> None:
+        self._sync_detector_cfg()
         if now - self.last_rescan >= 60:
             self._rescan_packages(now)
         if not self.detector_installed and now - self.last_detector_install > 120:
@@ -734,6 +760,7 @@ class Engine:
             "lastError": inst.last_error,
             "lastErrorAt": int(inst.last_error_at * 1000) if inst.last_error_at else None,
             "target": inst.target or {"kind": "place", "value": inst.place_id or ""},
+            "render3d": inst.render3d if inst.render3d is not None else bool(self.cfg.get("render3d", True)),
         }
         self.rep.account(inst.letter, data)
 
@@ -745,9 +772,9 @@ def parse_command(raw: Any) -> dict | None:
     if not isinstance(raw, dict):
         return None
     t = raw.get("type")
-    if t not in ("rejoin", "stop", "start", "target", "reload-config"):
+    if t not in ("rejoin", "stop", "start", "target", "reload-config", "render3d"):
         return None
     letter = raw.get("letter")
     if letter is not None and not re.match(r"^[A-Za-z0-9_-]{1,24}$", str(letter)):
         return None
-    return {"type": t, "letter": letter, "target": raw.get("target"), "at": raw.get("at")}
+    return {"type": t, "letter": letter, "target": raw.get("target"), "on": raw.get("on"), "at": raw.get("at")}

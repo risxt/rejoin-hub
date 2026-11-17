@@ -3,6 +3,8 @@
   It only writes one small status file per account: <workspace>/RejoinHub/hb_<userId>.json, overwritten every 10 s
   and right away when Roblox shows an error. No network calls. The phone agent reads the file to decide whether the
   account is in game, kicked or disconnected.
+  It also reads <workspace>/RejoinHub/cfg_<userId>.json, written by the agent, for per-account options:
+  {"render3d": false} turns 3D rendering off (the game keeps running; the screen stays blank, saving GPU and RAM).
 ]]
 
 local VERSION = 1
@@ -32,6 +34,7 @@ local GuiService = game:GetService("GuiService")
 local CoreGui = game:GetService("CoreGui")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
+local RunService = game:GetService("RunService")
 
 local LP = Players.LocalPlayer
 while not LP and alive() do
@@ -42,8 +45,26 @@ if not alive() then return end
 
 local FOLDER = "RejoinHub"
 local FILE = FOLDER .. "/hb_" .. tostring(LP.UserId) .. ".json"
+local CFG = FOLDER .. "/cfg_" .. tostring(LP.UserId) .. ".json"
 local BOOT = os.time()
 local lastError = nil
+local render3d = nil
+
+-- Options from the agent. Missing file or bad JSON means "keep the current state".
+local function applyConfig()
+	if type(readfile) ~= "function" or type(isfile) ~= "function" then return end
+	local ok, raw = pcall(function()
+		return isfile(CFG) and readfile(CFG) or nil
+	end)
+	if not ok or not raw or raw == "" then return end
+	local ok2, cfg = pcall(function() return HttpService:JSONDecode(raw) end)
+	if not ok2 or type(cfg) ~= "table" then return end
+	local want = cfg.render3d ~= false
+	if want ~= render3d then
+		render3d = want
+		pcall(function() RunService:Set3dRenderingEnabled(want) end)
+	end
+end
 
 local function canWrite()
 	return type(writefile) == "function"
@@ -59,6 +80,7 @@ local function save()
 		user = LP.Name,
 		placeId = tostring(game.PlaceId),
 		jobId = tostring(game.JobId),
+		render3d = render3d ~= false,
 		err = lastError,
 	}
 	pcall(function()
@@ -150,10 +172,12 @@ if env.RH_ANTI_AFK ~= false then
 	end)
 end
 
+applyConfig()
 save()
 task.spawn(function()
 	while alive() do
 		task.wait(INTERVAL)
+		applyConfig()
 		save()
 	end
 end)
