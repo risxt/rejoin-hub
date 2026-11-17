@@ -205,6 +205,25 @@ class EngineTests(unittest.TestCase):
         self.assertLess(len(launches), 9)  # 150 s join window + growing waits
         self.assertTrue(any("failed joins in a row" in t for t in rep.texts("p")))
 
+    def test_new_clone_installed_while_running(self):
+        e, dev, rep, clock = make([Clone("com.roblox.clienp", "alpha_one", "101")])
+        e.setup()
+        run_for(e, dev, 60)
+        dev.clones["com.roblox.clienu"] = Clone("com.roblox.clienu", "uniform_9", "909")
+        run_for(e, dev, 120)
+        self.assertIn("New clone found: com.roblox.clienu", rep.texts("u"))
+        self.assertEqual(statuses(rep).get("u"), "ingame")
+
+    def test_one_failed_package_scan_does_not_drop_clones(self):
+        e, dev, rep, clock = make()
+        e.setup()
+        run_for(e, dev, 60)
+        real = dev.roblox_packages
+        dev.roblox_packages = lambda: []
+        run_for(e, dev, 70)  # one rescan comes back empty
+        self.assertEqual(len(e.instances), 3)
+        dev.roblox_packages = real
+
     def test_state_survives_restart(self):
         e, dev, rep, clock = make()
         e.setup()

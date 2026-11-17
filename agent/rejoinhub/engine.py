@@ -132,6 +132,8 @@ class Engine:
         self.last_status_post = 0.0
         self.last_device_report = 0.0
         self.last_close = 0.0
+        self.last_rescan = 0.0
+        self.empty_scans = 0
         self.freeform_ready = False
         self.stop_event = threading.Event()
         self._load_state()
@@ -217,6 +219,7 @@ class Engine:
             for inst in self.instances.values():
                 self.dev.apply_low_gfx(inst.pkg, True)
         self.install_detector()
+        self.last_rescan = self.clock()
         names = ", ".join(f"{i.letter.upper()}={mask(i.user)}" for i in self.instances.values())
         self.rep.log(f"Agent started with {len(self.instances)} clone(s): {names or 'none'}", "info")
         self.discord.send("Agent started", f"{len(self.instances)} clone(s): {names or 'none'}", "info")
@@ -606,8 +609,44 @@ class Engine:
         return res
 
     # ---- housekeeping ---------------------------------------------------------------------------------------
+    def _rescan_packages(self, now: float) -> None:
+        """Pick up clones installed or removed while the agent runs (no restart needed)."""
+        self.last_rescan = now
+        pkgs = self.dev.roblox_packages()
+        if not pkgs and self.instances:
+            # an empty list is far more often a failed `pm` call than every clone uninstalled at once
+            self.empty_scans += 1
+            if self.empty_scans < 3:
+                return
+        self.empty_scans = 0
+        added = [p for p in pkgs if p not in self.instances]
+        removed = [p for p in self.instances if p not in pkgs]
+        for pkg in added:
+            inst = Instance(pkg=pkg, letter=clone_letter(pkg))
+            ident = self.dev.identity(pkg)
+            inst.user, inst.user_id = ident.user, ident.user_id
+            if inst.user_id:
+                self.bindings[inst.user_id] = pkg
+            inst.status, inst.awaiting_launch, inst.next_try_at = "rejoining", True, now + 5
+            self.instances[pkg] = inst
+            if self.cfg["lowGfx"]:
+                self.dev.apply_low_gfx(pkg, True)
+            self.rep.log(f"New clone found: {pkg}", "info", inst.letter)
+            self._report(inst)
+        for pkg in removed:
+            inst = self.instances.pop(pkg)
+            self.rep.forget_account(inst.letter)
+            self.rep.log(f"Clone removed: {pkg}", "plain", inst.letter)
+        if added:
+            self.install_detector()  # Delta may have just created its folders
+            self.tiled_set = ()
+        if added or removed:
+            self.save_state()
+
     def _housekeeping(self, now: float) -> None:
-        if not self.detector_installed and now - self.last_detector_install > 600:
+        if now - self.last_rescan >= 60:
+            self._rescan_packages(now)
+        if not self.detector_installed and now - self.last_detector_install > 120:
             self.install_detector()
         if self.detector_installed and not any(i.last_hb for i in self.instances.values()) \
                 and now - self.last_discovery > 300 and any(i.status == "rejoining" for i in self.instances.values()):
