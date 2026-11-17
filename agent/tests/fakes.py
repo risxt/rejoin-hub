@@ -123,6 +123,9 @@ class FakeDevice(Device):
         c.links.append(link)
         self.next_pid += 1
 
+    def autostart_ready(self) -> bool:
+        return True
+
     def logged_in(self, pkg: str) -> bool:
         return self.clones[pkg].logged_in
 

@@ -255,7 +255,10 @@ class Agent:
                 raise SystemExit("The phone key was changed in the dashboard. Copy the install command again and run it.") from None
             raise
         self.load_remote_config()
-        self.rep.device({"agent": VERSION, "android": self.engine.dev.android()})
+        auto = self.engine.dev.autostart_ready()
+        self.rep.device({"agent": VERSION, "android": self.engine.dev.android(), "autostart": auto})
+        if not auto:
+            self.rep.log("Auto-start after reboot is off: install Termux:Boot (same source as Termux) and open it once", "warn")
         threading.Thread(target=self.fb.stream, args=(f"commands/{self.dev_id}", self._on_command_event, self.stop),
                          name="commands", daemon=True).start()
         threading.Thread(target=self._heartbeat_loop, name="heartbeat", daemon=True).start()

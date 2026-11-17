@@ -100,4 +100,7 @@ else
   rh start >/dev/null
 fi
 say "Done. This phone shows up in the dashboard within 30 seconds."
+if ! su -c 'pm path com.termux.boot' 2>/dev/null | grep -q package; then
+  warn "Auto-start after reboot is OFF: install Termux:Boot (same source as Termux) and open it once."
+fi
 say "Commands: rh status · rh log · rh doctor · rh stop · rh start"

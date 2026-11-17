@@ -128,6 +128,7 @@ def cmd_doctor(a: argparse.Namespace) -> None:
     print(f"    task ids: { {k: v for k, v in tasks.items() if 'roblox' in k} or 'none running' }")
     rc, out = dev.run("am task 2>&1 | head -5")
     print(f"    'am task' help: {out.strip().splitlines()[0] if out.strip() else 'none'}")
+    print(f"{ok(dev.autostart_ready())}auto-start after reboot (Termux:Boot installed + boot script)")
     print(f"    phantom process limit: {dev.out('device_config get activity_manager max_phantom_processes') or 'n/a'}")
     print("Done. Send a screenshot of this to Claude if something shows '--'.")
 

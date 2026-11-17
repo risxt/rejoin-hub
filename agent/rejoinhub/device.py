@@ -131,6 +131,13 @@ class Device:
                        f"/data/data/{q(pkg)}/files 2>/dev/null | head -1", 20)
         return bool(hit.strip())
 
+    def autostart_ready(self) -> bool:
+        """True when the phone will start the agent by itself after a reboot: the Termux:Boot add-on is installed
+        and our boot script is in place (the installer writes ~/.termux/boot/rejoinhub.sh)."""
+        import os
+        script = os.path.join(os.path.expanduser("~"), ".termux", "boot", "rejoinhub.sh")
+        return bool(self.out("pm path com.termux.boot 2>/dev/null")) and os.path.isfile(script)
+
     # ---- processes ------------------------------------------------------------------------------------------
     def pids(self, pkg: str) -> list[int]:
         return [int(x) for x in self.out(f"pidof {q(pkg)}").split() if x.isdigit()]
