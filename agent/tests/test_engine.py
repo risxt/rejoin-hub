@@ -269,16 +269,15 @@ class EngineTests(unittest.TestCase):
         e.setup()
         run_for(e, dev, 120)
         cfg = f"{dev.WS}/RejoinHub/cfg_101.json"
-        # AFK default: dark screen and a 15 FPS cap
-        self.assertEqual(json.loads(dev.files[cfg]), {"render3d": False, "fps": 15, "strip": True})
-        e.submit({"type": "render3d", "letter": "p", "on": True})
+        self.assertEqual(json.loads(dev.files[cfg]), {"render3d": True})
+        e.submit({"type": "render3d", "letter": "p", "on": False})
         run_for(e, dev, 20)  # the command lands after a tick; the cfg file is written on the next one
-        self.assertEqual(json.loads(dev.files[cfg]), {"render3d": True, "fps": 15, "strip": True})
-        self.assertTrue(rep.accounts["p"]["render3d"])
-        self.assertFalse(rep.accounts["q"]["render3d"])
-        e.apply_config({"render3d": True, "fpsCap": 10})
+        self.assertEqual(json.loads(dev.files[cfg]), {"render3d": False})
+        self.assertFalse(rep.accounts["p"]["render3d"])
+        self.assertTrue(rep.accounts["q"]["render3d"])
+        e.apply_config({"render3d": False})
         run_for(e, dev, 20)
-        self.assertEqual(json.loads(dev.files[f"{dev.WS}/RejoinHub/cfg_202.json"]), {"render3d": True, "fps": 10, "strip": True})
+        self.assertEqual(json.loads(dev.files[f"{dev.WS}/RejoinHub/cfg_202.json"]), {"render3d": False})
 
     def test_not_logged_in_is_left_alone_until_login(self):
         clones = [Clone("com.roblox.clienp", "alpha_one", "101", logged_in=False)]
